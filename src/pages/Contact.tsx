@@ -84,7 +84,7 @@ const Contact = () => (
               <h4 className="text-sm font-semibold text-foreground mb-2">Project Supervisors</h4>
               <p className="text-sm text-muted-foreground">Dr. Neelam Rawat & Ms. Shruti Aggarwal</p>
               <h4 className="text-sm font-semibold text-foreground mt-4 mb-2">Project Incharge</h4>
-              <p className="text-sm text-muted-foreground">Dr. Ankit Kumar & Ms. Annu Yadav</p>
+              <p className="text-sm text-muted-foreground">Dr. Ankit Verma & Ms. Annu Yadav</p>
             </div>
           </motion.div>
         </div>
