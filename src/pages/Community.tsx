@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Heart, MessageCircle, Users, Clock, ThumbsUp, Search, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import Layout from "@/components/Layout";
+import { formatDistanceToNow } from "date-fns";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 20 },
@@ -19,85 +20,244 @@ const fadeUp = {
 
 const categories = ["All", "Recovery", "Family Support", "Coping", "Stories", "Resources"];
 
-const posts = [
-  {
-    id: 1,
-    author: "Anonymous",
-    initials: "AH",
-    time: "2 hours ago",
-    category: "Recovery",
-    title: "Small wins matter — celebrating 30 days",
-    body: "Today marks 30 days of recovery. It hasn't been easy, but the support from this community has made all the difference. Thank you for being here.",
-    likes: 24,
-    replies: 8,
-  },
-  {
-    id: 2,
-    author: "Sarah M.",
-    initials: "SM",
-    time: "5 hours ago",
-    category: "Family Support",
-    title: "How do I support my brother without enabling?",
-    body: "My brother has been struggling with addiction for years. I want to help but I'm not sure where the line is. Has anyone navigated this?",
-    likes: 18,
-    replies: 12,
-  },
-  {
-    id: 3,
-    author: "Anonymous",
-    initials: "JD",
-    time: "1 day ago",
-    category: "Coping",
-    title: "Breathing exercises that actually help",
-    body: "I've been practicing box breathing for the past two weeks and it's genuinely helped with my anxiety. 4-4-4-4 pattern. Would love to hear what works for others.",
-    likes: 31,
-    replies: 15,
-  },
-  {
-    id: 4,
-    author: "Mike R.",
-    initials: "MR",
-    time: "2 days ago",
-    category: "Stories",
-    title: "One year sober — my story",
-    body: "A year ago I couldn't imagine getting through a single day. Today, I'm sharing my story hoping it gives someone else the strength to keep going.",
-    likes: 56,
-    replies: 22,
-  },
-  {
-    id: 5,
-    author: "Anonymous",
-    initials: "KL",
-    time: "3 days ago",
-    category: "Resources",
-    title: "Free online support group sessions",
-    body: "Found some great free virtual group therapy sessions. They run every Tuesday and Thursday evening. Sharing the details for anyone interested.",
-    likes: 42,
-    replies: 9,
-  },
-];
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const PAGE_SIZE = 10;
+
+const getAuthHeader = () => {
+  const token = localStorage.getItem("authToken");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+interface CommunityPost {
+  id: string;
+  authorName: string;
+  body: string;
+  category: string;
+  title: string;
+  likes: number;
+  replies: number;
+  createdAt: string | null;
+  anonymous?: boolean;
+}
+
+interface Reply {
+  id: string;
+  postId: string;
+  body: string;
+  authorName: string;
+  createdAt: string | null;
+}
 
 const Community = () => {
   const [activeCategory, setActiveCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
-  const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [showNewPost, setShowNewPost] = useState(false);
+  const [posts, setPosts] = useState<CommunityPost[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [newTitle, setNewTitle] = useState("");
+  const [newBody, setNewBody] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [repliesByPost, setRepliesByPost] = useState<Record<string, Reply[]>>({});
+  const [openReplies, setOpenReplies] = useState<Set<string>>(new Set());
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [isLoadingReplies, setIsLoadingReplies] = useState<Record<string, boolean>>({});
+  const [offset, setOffset] = useState(0);
+  const offsetRef = useRef(0);
 
-  const filtered = posts.filter((p) => {
-    const matchCategory = activeCategory === "All" || p.category === activeCategory;
-    const matchSearch =
-      !searchQuery ||
-      p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.body.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCategory && matchSearch;
-  });
+  const getInitials = (name: string) => {
+    const parts = name.trim().split(/\s+/);
+    const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+    return initials || "AN";
+  };
 
-  const toggleLike = (id: number) => {
+  const fetchPosts = async (reset = false) => {
+    if (reset) {
+      setIsLoading(true);
+      offsetRef.current = 0;
+      setOffset(0);
+      setHasMore(true);
+    } else {
+      setIsLoadingMore(true);
+    }
+    setError(null);
+
+    try {
+      const params = new URLSearchParams();
+      if (activeCategory !== "All") {
+        params.set("category", activeCategory);
+      }
+      if (searchQuery.trim()) {
+        params.set("q", searchQuery.trim());
+      }
+      params.set("limit", String(PAGE_SIZE));
+      params.set("offset", String(reset ? 0 : offsetRef.current));
+
+      const response = await fetch(`${API_BASE}/api/posts?${params.toString()}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        if (response.status === 304) return;
+        throw new Error("Failed to load community posts.");
+      }
+
+      const payload = await response.json();
+      const nextPosts = payload?.data || [];
+      setPosts((prev) => (reset ? nextPosts : [...prev, ...nextPosts]));
+      const nextOffset = reset ? nextPosts.length : offsetRef.current + nextPosts.length;
+      offsetRef.current = nextOffset;
+      setOffset(nextOffset);
+      if (nextPosts.length < PAGE_SIZE) {
+        setHasMore(false);
+      }
+    } catch (err) {
+      setError("Unable to load community posts right now.");
+    } finally {
+      setIsLoading(false);
+      setIsLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchPosts(true);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [activeCategory, searchQuery]);
+
+  const filtered = useMemo(() => posts, [posts]);
+
+
+  const toggleLike = async (id: string) => {
     setLikedPosts((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+
+    try {
+      const response = await fetch(`${API_BASE}/api/posts/${id}/like`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Failed to like post.");
+      }
+      const payload = await response.json();
+      const likes = payload?.data?.likes;
+      if (typeof likes === "number") {
+        setPosts((prev) =>
+          prev.map((post) => (post.id === id ? { ...post, likes } : post))
+        );
+      }
+    } catch (err) {
+      setLikedPosts((prev) => {
+        const next = new Set(prev);
+        next.has(id) ? next.delete(id) : next.add(id);
+        return next;
+      });
+    }
+  };
+
+  const handleCreatePost = async () => {
+    if (!newTitle.trim() || !newBody.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      const category = activeCategory === "All" ? "Recovery" : activeCategory;
+      const response = await fetch(`${API_BASE}/api/posts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          body: newBody.trim(),
+          category,
+          authorName: "Anonymous",
+          anonymous: true,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to create post.");
+      }
+
+      const payload = await response.json();
+      if (payload?.data) {
+        setPosts((prev) => [payload.data, ...prev]);
+      }
+      setNewTitle("");
+      setNewBody("");
+      setShowNewPost(false);
+    } catch (err) {
+      setError("Unable to create a post right now.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const fetchReplies = async (postId: string) => {
+    setIsLoadingReplies((prev) => ({ ...prev, [postId]: true }));
+    try {
+      const response = await fetch(`${API_BASE}/api/posts/${postId}/replies`);
+      if (!response.ok) {
+        throw new Error("Failed to load replies.");
+      }
+      const payload = await response.json();
+      setRepliesByPost((prev) => ({ ...prev, [postId]: payload?.data || [] }));
+    } catch (err) {
+      setError("Unable to load replies right now.");
+    } finally {
+      setIsLoadingReplies((prev) => ({ ...prev, [postId]: false }));
+    }
+  };
+
+  const toggleReplies = (postId: string) => {
+    setOpenReplies((prev) => {
+      const next = new Set(prev);
+      if (next.has(postId)) {
+        next.delete(postId);
+      } else {
+        next.add(postId);
+      }
+      return next;
+    });
+
+    if (!repliesByPost[postId]) {
+      fetchReplies(postId);
+    }
+  };
+
+  const handleReplySubmit = async (postId: string) => {
+    const body = replyDrafts[postId]?.trim();
+    if (!body) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/api/posts/${postId}/replies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify({
+          body,
+          authorName: "Anonymous",
+          anonymous: true,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to create reply.");
+      }
+      const payload = await response.json();
+      setRepliesByPost((prev) => ({
+        ...prev,
+        [postId]: [...(prev[postId] || []), payload.data],
+      }));
+      setReplyDrafts((prev) => ({ ...prev, [postId]: "" }));
+      setPosts((prev) =>
+        prev.map((post) =>
+          post.id === postId ? { ...post, replies: (post.replies || 0) + 1 } : post
+        )
+      );
+    } catch (err) {
+      setError("Unable to send reply right now.");
+    }
   };
 
   return (
@@ -185,13 +345,23 @@ const Community = () => {
               className="max-w-3xl mx-auto mb-8"
             >
               <div className="bg-card border border-border rounded-xl p-5 space-y-3">
-                <Input placeholder="Post title..." className="font-medium" />
-                <Textarea placeholder="Share your thoughts... (This is a demo — posts aren't saved)" rows={3} />
+                <Input
+                  placeholder="Post title..."
+                  className="font-medium"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                />
+                <Textarea
+                  placeholder="Share your thoughts..."
+                  rows={3}
+                  value={newBody}
+                  onChange={(e) => setNewBody(e.target.value)}
+                />
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" size="sm" onClick={() => setShowNewPost(false)}>
                     Cancel
                   </Button>
-                  <Button size="sm" onClick={() => setShowNewPost(false)}>
+                  <Button size="sm" onClick={handleCreatePost} disabled={isSubmitting}>
                     Post
                   </Button>
                 </div>
@@ -201,6 +371,14 @@ const Community = () => {
 
           {/* Posts */}
           <div className="max-w-3xl mx-auto space-y-4">
+            {error && (
+              <div className="text-center py-6 text-sm text-destructive">{error}</div>
+            )}
+
+            {isLoading && (
+              <div className="text-center py-6 text-sm text-muted-foreground">Loading discussions...</div>
+            )}
+
             {filtered.map((post, i) => (
               <motion.div
                 key={post.id}
@@ -214,14 +392,17 @@ const Community = () => {
                 <div className="flex items-start gap-3">
                   <Avatar className="w-9 h-9 shrink-0">
                     <AvatarFallback className="bg-accent text-accent-foreground text-xs">
-                      {post.initials}
+                      {getInitials(post.authorName || "Anonymous")}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-sm font-semibold text-foreground">{post.author}</span>
+                      <span className="text-sm font-semibold text-foreground">{post.authorName || "Anonymous"}</span>
                       <span className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Clock className="h-3 w-3" /> {post.time}
+                        <Clock className="h-3 w-3" />{" "}
+                        {post.createdAt
+                          ? formatDistanceToNow(new Date(post.createdAt), { addSuffix: true })
+                          : "just now"}
                       </span>
                       <Badge variant="secondary" className="text-[10px] px-2 py-0">
                         {post.category}
@@ -237,12 +418,54 @@ const Community = () => {
                         }`}
                       >
                         <ThumbsUp className="h-3.5 w-3.5" />
-                        {post.likes + (likedPosts.has(post.id) ? 1 : 0)}
+                        {post.likes}
                       </button>
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <button
+                        onClick={() => toggleReplies(post.id)}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
                         <MessageCircle className="h-3.5 w-3.5" /> {post.replies} replies
-                      </span>
+                      </button>
                     </div>
+
+                    {openReplies.has(post.id) && (
+                      <div className="mt-4 space-y-3">
+                        {isLoadingReplies[post.id] && (
+                          <div className="text-xs text-muted-foreground">Loading replies...</div>
+                        )}
+
+                        {(repliesByPost[post.id] || []).map((reply) => (
+                          <div key={reply.id} className="border border-border rounded-lg p-3 bg-secondary/40">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                              <span className="font-semibold text-foreground">{reply.authorName || "Anonymous"}</span>
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                {reply.createdAt
+                                  ? formatDistanceToNow(new Date(reply.createdAt), { addSuffix: true })
+                                  : "just now"}
+                              </span>
+                            </div>
+                            <p className="text-sm text-muted-foreground leading-relaxed">{reply.body}</p>
+                          </div>
+                        ))}
+
+                        <div className="space-y-2">
+                          <Textarea
+                            rows={2}
+                            placeholder="Write a reply..."
+                            value={replyDrafts[post.id] || ""}
+                            onChange={(e) =>
+                              setReplyDrafts((prev) => ({ ...prev, [post.id]: e.target.value }))
+                            }
+                          />
+                          <div className="flex justify-end">
+                            <Button size="sm" onClick={() => handleReplySubmit(post.id)}>
+                              Reply
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </motion.div>
@@ -251,6 +474,19 @@ const Community = () => {
             {filtered.length === 0 && (
               <div className="text-center py-12 text-muted-foreground text-sm">
                 No discussions found. Try a different search or category.
+              </div>
+            )}
+
+            {hasMore && !isLoading && (
+              <div className="text-center py-6">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchPosts(false)}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? "Loading..." : "Load more"}
+                </Button>
               </div>
             )}
           </div>

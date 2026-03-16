@@ -14,23 +14,18 @@ interface Message {
   timestamp: Date;
 }
 
-const botResponses = [
-  "I hear you, and I want you to know that your feelings are completely valid. It takes courage to share what you're going through.",
-  "Thank you for trusting me with that. Remember, healing isn't linear — every small step forward counts.",
-  "It sounds like you're carrying a lot right now. Would you like to explore some grounding techniques that might help?",
-  "You're not alone in this. Many people have walked a similar path and found their way to recovery.",
-  "That's a really important insight. Recognizing patterns is one of the first steps toward positive change.",
-  "I'm here for you, anytime you need to talk. There's no judgment here — only support.",
-  "Have you considered reaching out to our community forum? Sometimes connecting with others who understand can make a real difference.",
-  "Let's take a moment to breathe together. Inhale for 4 counts, hold for 4, exhale for 4. How does that feel?",
-];
-
 const suggestedPrompts = [
   "I'm feeling overwhelmed today",
   "How can I support a loved one?",
   "Tell me about coping strategies",
   "I need someone to talk to",
 ];
+
+const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
+const getAuthHeader = () => {
+  const token = localStorage.getItem("authToken");
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 const Chatbot = () => {
   const [messages, setMessages] = useState<Message[]>([
@@ -43,7 +38,9 @@ const Chatbot = () => {
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messageIdRef = useRef(1);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -51,11 +48,11 @@ const Chatbot = () => {
     }
   }, [messages, isTyping]);
 
-  const sendMessage = (text: string) => {
+  const sendMessage = async (text: string) => {
     if (!text.trim()) return;
 
     const userMsg: Message = {
-      id: messages.length,
+      id: messageIdRef.current++,
       text: text.trim(),
       sender: "user",
       timestamp: new Date(),
@@ -65,16 +62,44 @@ const Chatbot = () => {
     setInput("");
     setIsTyping(true);
 
-    setTimeout(() => {
+    try {
+      const requestBody = sessionId ? { message: text.trim(), sessionId } : { message: text.trim() };
+      const response = await fetch(`${API_BASE}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeader() },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to reach the chat service.");
+      }
+
+      const payload = await response.json();
+      const replyText = payload?.data?.reply || "I'm here with you. Want to share a bit more?";
+      if (payload?.data?.sessionId && payload.data.sessionId !== sessionId) {
+        setSessionId(payload.data.sessionId);
+      }
+
       const botMsg: Message = {
-        id: messages.length + 1,
-        text: botResponses[Math.floor(Math.random() * botResponses.length)],
+        id: messageIdRef.current++,
+        text: replyText,
         sender: "bot",
         timestamp: new Date(),
       };
+
       setMessages((prev) => [...prev, botMsg]);
+    } catch (error) {
+      const botMsg: Message = {
+        id: messageIdRef.current++,
+        text: "I'm here with you, but I'm having trouble connecting right now. Please try again in a moment.",
+        sender: "bot",
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, botMsg]);
+    } finally {
       setIsTyping(false);
-    }, 1200 + Math.random() * 800);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Menu, X, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth-context";
 
 const navLinks = [
   { label: "Home", to: "/" },
@@ -10,11 +11,14 @@ const navLinks = [
   { label: "Chatbot", to: "/chatbot" },
   { label: "Community", to: "/community" },
   { label: "Contact", to: "/contact" },
+  { label: "Login", to: "/login" },
+  { label: "Dashboard", to: "/dashboard" },
 ];
 
 const Navbar = () => {
   const [open, setOpen] = useState(false);
   const location = useLocation();
+  const { token, logout } = useAuth();
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
@@ -41,8 +45,19 @@ const Navbar = () => {
           ))}
         </div>
 
-        <div className="hidden md:block">
-          <Button size="sm">Get Started</Button>
+        <div className="hidden md:flex items-center gap-2">
+          {token ? (
+            <>
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/dashboard">Dashboard</Link>
+              </Button>
+              <Button size="sm" onClick={logout}>Logout</Button>
+            </>
+          ) : (
+            <Button size="sm" asChild>
+              <Link to="/signup">Get Started</Link>
+            </Button>
+          )}
         </div>
 
         {/* Mobile toggle */}
@@ -72,7 +87,15 @@ const Navbar = () => {
               {link.label}
             </Link>
           ))}
-          <Button size="sm" className="mt-2 w-full">Get Started</Button>
+          {token ? (
+            <Button size="sm" className="mt-2 w-full" onClick={logout}>
+              Logout
+            </Button>
+          ) : (
+            <Button size="sm" className="mt-2 w-full" asChild>
+              <Link to="/signup">Get Started</Link>
+            </Button>
+          )}
         </div>
       )}
     </nav>
