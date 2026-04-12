@@ -12,6 +12,7 @@ const Features = lazy(() => import("./pages/Features"));
 const Chatbot = lazy(() => import("./pages/Chatbot"));
 const Community = lazy(() => import("./pages/Community"));
 const Contact = lazy(() => import("./pages/Contact"));
+const Help = lazy(() => import("./pages/Help"));
 const Login = lazy(() => import("./pages/Login"));
 const Signup = lazy(() => import("./pages/Signup"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -34,6 +35,7 @@ const App = () => (
               <Route path="/chatbot" element={<Chatbot />} />
               <Route path="/community" element={<Community />} />
               <Route path="/contact" element={<Contact />} />
+              <Route path="/help" element={<Help />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
               <Route path="/dashboard" element={<Dashboard />} />
